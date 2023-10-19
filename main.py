@@ -37,14 +37,15 @@ def main():
     parser.add_argument("--adam_beta2", default=0.999, type=float, help="adam second beta value")
     parser.add_argument("--gpu_id", default="0", type=str, help="gpu_id")
     parser.add_argument("--variance", default=5, type=float)
+    parser.add_argument("--no_cuda", default=False, type=bool)
 
     args = parser.parse_args()
 
     set_seed(args.seed)
     check_path(args.output_dir)
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu_id
     args.cuda_condition = torch.cuda.is_available() and not args.no_cuda
+    print(torch.cuda.device_count())
 
     # --- 1.获取用户序列字典 & 最大序列长度---
     seq_dic, max_item = get_seq_dic(args)
