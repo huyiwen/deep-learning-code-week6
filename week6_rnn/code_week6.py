@@ -76,7 +76,7 @@ class Net(nn.Module):
         ] + [nn.MaxPool2d(kernel_size=2, stride=2)]
         return nn.Sequential(*vgg_blocks)
 
-    def __init__(self, fc_features, fc_hidden_units=4096, dropout_prob=0.1, arch=[[1, 1, 8], [2, 8, 32], [2, 32, 128], [2, 128, 128]]):
+    def __init__(self, fc_features, fc_hidden_units=4096, dropout_prob=0.1, arch=[[1, 1, 8], [2, 8, 64], [2, 64, 512], [2, 512, 512]]):
         super().__init__()
         self.num_labels = 10
         self.vggs = nn.Sequential(*[self.vgg_block(*param) for param in arch])
@@ -91,11 +91,11 @@ class Net(nn.Module):
         ])
         
     def forward(self, x, labels, criterion):
-        print(x.shape)
+        # print(x.shape)  # B C L H
         hidden_states = self.vggs(x)
-        print(hidden_states.shape)
-        flatten = hidden_states.flatten()
-        print(flatten.shape)
+        # print(hidden_states.shape)  # B C L H
+        flatten = hidden_states.flatten(start_dim=1)
+        # print(flatten.shape)  # B X
         logits = self.classifier(flatten)
 
         loss = None
@@ -172,7 +172,7 @@ def main():
     
 
     #===== 3. 初始化模型 =====
-    model = Net(128 * 16 * 16, 512).to(device)
+    model = Net(512, 4096).to(device)
 
     #===== 4. 初始化学习准则及优化器 =====
     # 指定训练loss为交叉熵loss  优化器默认为Adam
