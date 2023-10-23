@@ -20,13 +20,14 @@ class DataLoaderX(DataLoader):
 def load_dataset(batch_size):
 
     """
-    -功能: 
+    -功能:
     使用torchvision.datasets下载所需数据集
     通过DataLoader类指定batch大小并返回tensor
 
     -任务:
     请完善此函数 对齐各方法所需的数据类型接口 并正确读取到数据
     """
+
 
     horizontal = [transforms.RandomHorizontalFlip(1)]
     vertical = [transforms.RandomVerticalFlip(1)]
@@ -58,53 +59,51 @@ class Net(nn.Module):
 
     """
     -功能:
-    CNN框架
+    全连接神经网络框架
 
     -任务:
-    请自行实现CNN的搭建
+    请自行实现全连接神经网络框架的搭建
     """
 
-    @staticmethod
-    def vgg_block(num_hidden_layers, in_channels, out_channels):
-        vgg_blocks = [
-            nn.Conv2d(
-                in_channels if i == 0 else out_channels,
-                out_channels,
-                kernel_size=3,
-                padding=1
-            ) if i % 2 == 0 else nn.ReLU() for i in range(num_hidden_layers * 2)
-        ] + [nn.MaxPool2d(kernel_size=2, stride=2)]
-        return nn.Sequential(*vgg_blocks)
-
-    def __init__(self, fc_features, fc_hidden_units=4096, dropout_prob=0.1, arch=[[1, 1, 8], [2, 8, 32], [2, 32, 128], [2, 128, 128]]):
+    def __init__(
+        self,
+        image_size,
+        channels,
+        dim,
+        num_labels,
+        expansion_factor=4,
+        dropout = 0.,
+        dense = nn.Linear
+    ):
         super().__init__()
-        self.num_labels = 10
-        self.vggs = nn.Sequential(*[self.vgg_block(*param) for param in arch])
-        self.classifier = nn.Sequential(*[
-            nn.Linear(fc_features, fc_hidden_units),
-            nn.ReLU(),
-            nn.Dropout(dropout_prob),
-            nn.Linear(fc_hidden_units, fc_hidden_units),
-            nn.ReLU(),
-            nn.Dropout(dropout_prob),
-            nn.Linear(fc_hidden_units, self.num_labels),
-        ])
-        
-    def forward(self, x, labels, criterion):
-        print(x.shape)
-        hidden_states = self.vggs(x)
-        print(hidden_states.shape)
-        flatten = hidden_states.flatten()
-        print(flatten.shape)
-        logits = self.classifier(flatten)
+        inner_dim = int(dim * expansion_factor)
+        self.num_labels = num_labels
+
+        self.hidden_layers = nn.Sequential(
+            dense(image_size*image_size*channels, inner_dim),  # hidden layer 1
+            nn.GELU(),
+            nn.Dropout(dropout),
+            dense(inner_dim, dim),  # hidden layer 2
+            nn.Dropout(dropout)
+        )
+        self.classifier = nn.Linear(dim, num_labels)  # output layer
+
+    def forward(self, pixel_values, labels=None, loss_fct=None):
+        batch_size, num_channels, height, width = pixel_values.shape
+        pixel_values = pixel_values.view(batch_size, -1)
+
+        layer_output = self.hidden_layers(pixel_values)
+        logits = self.classifier(layer_output)
 
         loss = None
         if labels is not None:
-            if criterion is None:
-                criterion = nn.CrossEntropyLoss()
+            if loss_fct is None:
+                loss_fct = nn.CrossEntropyLoss()
             labels = labels.to(logits.device)
-            loss = criterion(logits.view(-1, self.num_labels), labels.view(-1))
-        return loss, logits
+            loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
+
+        return (loss, logits) if loss is not None else (logits,)
+
 
 def train(model, train_loader, criterion, optimizer, scheduler, epoch, device):
 
@@ -131,9 +130,8 @@ def train(model, train_loader, criterion, optimizer, scheduler, epoch, device):
     print('Epoch: {} \tTraining Loss: {:.6f}'.format(epoch, train_loss))
     return {"train_loss": train_loss, "lr": scheduler.get_last_lr()[0]}
 
-
 def val(model, test_loader, criterion, epoch, device):
-    
+
     """
     -功能:
     实现模型训练完成后的验证过程
@@ -159,31 +157,55 @@ def val(model, test_loader, criterion, epoch, device):
     print('Epoch: {} \tValidation Loss: {:.6f}, Accuracy: {:6f}'.format(epoch, val_loss, acc))
     return {"val_loss": val_loss, "val_acc": acc}
 
+
 def main():
     #===== 1. 参数配置 =====
-    batch_size = 256
-    lr = 1e-3
-    epochs = 20
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    
+    config = dict(
+        batch_size=256,
+        lr=1e-3,
+        epochs=20,
+        channels=1,
+        num_labels=10,
+        image_size=28,
+        dim=512,
+        dropout=0.1,
+        expansion_factor=4,
+        device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"),
+    )
+    print(config)
 
     #===== 2. 读入数据 =====
-    train_loader, test_loader = load_dataset(batch_size)
-    
+    train_loader, test_loader = load_dataset(config['batch_size'])
+    # print(next(iter(train_loader)))
 
     #===== 3. 初始化模型 =====
-    model = Net(128 * 16 * 16, 512).to(device)
+    model = Net(
+        image_size=config['image_size'],
+        channels=config['channels'],
+        dim=config['dim'],
+        num_labels=config['num_labels'],
+        dropout=config['dropout'],
+        expansion_factor=config['expansion_factor'],
+    ).to(config['device'])
+    wandb.init(project="week4", config=config)
+    # summary(model, input_size=(batch_size, channels, image_size, image_size))
+    print(model)
 
     #===== 4. 初始化学习准则及优化器 =====
     # 指定训练loss为交叉熵loss  优化器默认为Adam
-    T_max = epochs * len(train_loader)
+    # PyTorch会自动把整数型的label转为one-hot型 以便计算交叉熵
+    # 思考：使用交叉熵损失函数时，预测模型的输出层是否需添加softmax层? 为什么？  （这个不用提交， 答案是否）
+    T_max = config['epochs'] * len(train_loader)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=lr)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=T_max)
+    optimizer = optim.Adam(model.parameters(), lr=config['lr'])
+    # scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=T_max)
+    scheduler = optim.lr_scheduler.ConstantLR(optimizer, config['lr'])
 
-    for epoch in range(1, epochs+1):
-        train(model, train_loader, criterion, optimizer, scheduler, epoch, device)
-        val(model, test_loader, criterion, epoch, device)
+    for epoch in range(1, config['epochs']+1):
+        info = {}
+        info.update(train(model, train_loader, criterion, optimizer, scheduler, epoch, config['device']))
+        info.update(val(model, test_loader, criterion, epoch, config['device']))
+        wandb.log(info)
 
 if __name__ == '__main__':
     main()
